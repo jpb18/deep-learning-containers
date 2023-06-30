@@ -183,17 +183,12 @@ RUN curl https://aws-dlc-licenses.s3.amazonaws.com/tensorflow-${TF_VERSION}/lice
 ########################################################
 
 FROM common AS ec2
-ARG TF_URL=https://framework-binaries.s3.us-west-2.amazonaws.com/tensorflow/r2.12_aws/cpu/2023-03-23-00-31/tensorflow_cpu-2.12.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+ARG TF_URL=tensorflow-aarch64==2.12
 
 RUN ${PIP} install --no-cache-dir -U \
     ${TF_URL} \
     tensorflow-io \
     tensorflow-datasets
-
-# Install Horovod with TensorFlow
-RUN HOROVOD_WITH_MPI=1 \
-   && HOROVOD_WITH_TENSORFLOW=1 HOROVOD_WITHOUT_MXNET=1 HOROVOD_WITHOUT_PYTORCH=1 \
-   && ${PIP} install --no-cache-dir horovod==0.27.0
 
 RUN HOME_DIR=/root \
    && curl -o ${HOME_DIR}/oss_compliance.zip https://aws-dlinfra-utilities.s3.amazonaws.com/oss_compliance.zip \
@@ -229,7 +224,7 @@ FROM common AS sagemaker
 LABEL maintainer="Amazon AI"
 LABEL dlc_major_version="1"
 
-ARG TF_URL=https://framework-binaries.s3.us-west-2.amazonaws.com/tensorflow/r2.12_aws/cpu/2023-03-23-00-31/tensorflow_cpu-2.12.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+ARG TF_URL=tensorflow-aarch64==2.12
 
 # sagemaker-specific environment variable
 ENV SAGEMAKER_TRAINING_MODULE sagemaker_tensorflow_container.training:main
@@ -243,12 +238,41 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y -qq krb5-user \
 && rm -rf /var/lib/apt/lists/*
 
+# update and install bazel through baselisk
+ENV USE_BAZEL_VERSION='5.3.0'
+RUN wget https://github.com/bazelbuild/bazelisk/releases/download/v1.17.0/bazelisk-linux-arm64 \
+    && mkdir /var/lib/bazelisk && mv bazelisk-linux-arm64 /usr/local/bin/bazel \
+    && chmod +x /usr/local/bin/bazel
+
+# build tensorflow text from source
+#RUN wget https://github.com/tensorflow/text/archive/refs/tags/v2.12.0.tar.gz \
+#    && tar -xvf ./v2.12.0.tar.gz && rm ./v2.12.0.tar.gz \
+#    && cd text-2.12.0 \
+#    && bazel version \
+#    && oss_scripts/run_build.sh \
+#    &&  ${PIP} install tensorflow_text-2-12-0-linux_arm64.whl \
+#    && cd .. && rm -rf text-2.12.0
+
+RUN git clone https://github.com/jpb18/text.git \
+    && cd text && git checkout 2.12 \
+    && oss_scripts/run_build.sh \ 
+    && ${PIP} install tensorflow_text-2.12.1-cp310-cp310-linux_aarch64.whl \
+    && cd .. && rm -rf text
+
+RUN apt-get update && apt-get install rsync -y --no-install-recommends
+RUN wget https://github.com/tensorflow/addons/archive/refs/tags/v0.20.0.zip \
+    && mkdir addons-0.20.0 \
+    && unzip ./v0.20.0.zip -d addons-0.20.0 && rm ./v0.20.0.zip \
+    && cd addons-0.20.0/addons-0.20.0 \
+    && ${PYTHON} configure.py \
+    && bazel build build_pip_pkg \
+    && bazel-bin/build_pip_pkg artifacts \
+    && ${PIP} install artifacts/tensorflow_addons-0.20.0-cp310-cp310-linux_aarch64.whl \
+    && cd ../.. && rm -rf addons-0.20.0
 
 # https://github.com/tensorflow/models/issues/9267
 # tf-models does not respect existing installations of TF and always installs open source TF
-RUN ${PIP} install --no-cache-dir -U \
-    tf-models-official==2.12.0 \
-    tensorflow-text==2.12.0
+RUN ${PIP} install --no-cache-dir -U tf-models-official==2.12.*
 
 RUN ${PIP} uninstall -y tensorflow tensorflow-gpu \
     ; ${PIP} install --no-cache-dir -U \

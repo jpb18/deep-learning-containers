@@ -23,7 +23,7 @@ ENV LC_ALL=C.UTF-8
 ENV SAGEMAKER_TRAINING_MODULE=sagemaker_tensorflow_container.training:main
 
 # Define framework-related package sources
-ARG TF_URL=https://aws-tensorflow-binaries.s3-us-west-2.amazonaws.com/tensorflow/r1.15_aws/20210225-214219/cpu/py36/tensorflow_cpu-1.15.5-cp36-cp36m-manylinux2010_x86_64.whl
+ARG TF_URL=https://aws-tensorflow-binaries.s3-us-west-2.amazonaws.com/tensorflow/r1.15_aws/20210225-214219/cpu/py36/tensorflow_aarch64-2.12.0-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
 
 # The smdebug pipeline relies for following format to perform string replace and trigger DLC pipeline for validating
 # the nightly builds. Therefore, while updating the smdebug version, please ensure that the format is not disturbed.
@@ -34,7 +34,8 @@ ARG PYTHON_PIP=python3-pip
 ARG PIP=pip3
 ARG PYTHON_VERSION=3.6.13
 
-RUN apt-get update \
+RUN apt-key adv --fetch-keys http://ports.ubuntu.com/ubuntu-ports \ 
+ && apt-get update \
  && apt-get install -y --no-install-recommends \
     build-essential \
     openssh-client \
@@ -106,11 +107,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && apt-get clean
 
-RUN wget https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tgz \
- && tar -xvf Python-$PYTHON_VERSION.tgz \
- && cd Python-$PYTHON_VERSION \
- && ./configure && make && make install \
- && rm -rf ../Python-$PYTHON_VERSION*
+RUN apt-get install python=$PYTHON_VERSION
 
 RUN ${PIP} --no-cache-dir install --upgrade \
     pip \
