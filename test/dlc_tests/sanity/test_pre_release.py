@@ -260,8 +260,9 @@ def test_framework_version_cpu(image):
 
     tested_framework, tag_framework_version = get_framework_and_version_from_tag(image)
     # Framework name may include huggingface
-    if tested_framework.startswith("huggingface_"):
-        tested_framework = tested_framework[len("huggingface_") :]
+    if any([tested_framework.startswith(prefix) for prefix in ["huggingface_", "stabilityai_"]]):
+        # Remove the prefix till first underscore
+        tested_framework = "_".join(tested_framework.split("_")[1:])
     # Module name is torch
     if tested_framework == "pytorch":
         tested_framework = "torch"
@@ -437,8 +438,10 @@ def test_framework_and_cuda_version_gpu(gpu, ec2_connection):
         ), f"Cannot find model server version {tag_framework_version} in {output}"
     else:
         # Framework name may include huggingface
-        if tested_framework.startswith("huggingface_"):
-            tested_framework = tested_framework[len("huggingface_") :]
+        if any(
+            [tested_framework.startswith(prefix) for prefix in ["huggingface_", "stabilityai_"]]
+        ):
+            tested_framework = "_".join(tested_framework.split("_")[1:])
             # Replace the trcomp string as it is extracted from ECR repo name
             tested_framework = tested_framework.replace("_trcomp", "")
         # Framework name may include trcomp
@@ -571,6 +574,15 @@ def test_pip_check(image):
     gpu_suffix = "-gpu" if "gpu" in image else ""
     allowed_exception_list = []
 
+    # SageMaker Python SDK updated its pyyaml requirement to 6.0, which is incompatible with the
+    # requirement from awscli. awscli only requires pyyaml for ecs/eks related invocations, while
+    # pyyaml usage seems to be more fundamental in sagemaker. Therefore, we are ignoring awscli's
+    # requirement in favor of sagemaker.
+    allowed_awscli_exception = re.compile(
+        r"^awscli \d+(\.\d+)* has requirement PyYAML<5\.5,>=3\.10, but you have pyyaml 6\.0.$"
+    )
+    allowed_exception_list.append(allowed_awscli_exception)
+
     # TF inference containers do not have core tensorflow installed by design. Allowing for this pip check error
     # to occur in order to catch other pip check issues that may be associated with TF inference
     # smclarify binaries have s3fs->aiobotocore dependency which uses older version of botocore. temporarily
@@ -682,7 +694,7 @@ def test_cuda_paths(gpu):
     python_version = re.search(r"(py\d+)", image).group(1)
     short_python_version = None
     image_tag = re.search(
-        r":(\d+(\.\d+){2}(-transformers\d+(\.\d+){2})?-(gpu)-(py\d+)(-cu\d+)-(ubuntu\d+\.\d+)((-ec2)?-example|-ec2|-sagemaker-lite|-sagemaker-full|-sagemaker)?)",
+        r":(\d+(\.\d+){2}(-(transformers|diffusers)\d+(\.\d+){2})?-(gpu)-(py\d+)(-cu\d+)-(ubuntu\d+\.\d+)((-ec2)?-example|-ec2|-sagemaker-lite|-sagemaker-full|-sagemaker)?)",
         image,
     ).group(1)
 

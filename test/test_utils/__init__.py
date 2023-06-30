@@ -35,6 +35,8 @@ LOGGER.addHandler(logging.StreamHandler(sys.stderr))
 DEFAULT_REGION = "us-west-2"
 # Constant to represent region where p3dn tests can be run
 P3DN_REGION = "us-east-1"
+# Constant to represent region where p4de tests can be run
+P4DE_REGION = "us-east-1"
 
 
 def get_ami_id_boto3(region_name, ami_name_pattern):
@@ -62,6 +64,10 @@ UBUNTU_18_BASE_DLAMI_US_WEST_2 = get_ami_id_boto3(
 )
 UBUNTU_18_BASE_DLAMI_US_EAST_1 = get_ami_id_boto3(
     region_name="us-east-1", ami_name_pattern="Deep Learning Base AMI (Ubuntu 18.04) Version ??.?"
+)
+# The Ubuntu 20.04 AMI which adds GDRCopy is used only for GDRCopy feature that is supported on PT1.13 and PT2.0
+UBUNTU_20_BASE_DLAMI_US_WEST_2 = get_ami_id_boto3(
+    region_name="us-west-2", ami_name_pattern="Deep Learning Base GPU AMI (Ubuntu 20.04) ????????"
 )
 AML2_BASE_DLAMI_US_WEST_2 = get_ami_id_boto3(
     region_name="us-west-2", ami_name_pattern="Deep Learning Base AMI (Amazon Linux 2) Version ??.?"
@@ -122,6 +128,7 @@ UBUNTU_18_HPU_DLAMI_US_EAST_1 = "ami-0d83d7487f322545a"
 UL_AMI_LIST = [
     UBUNTU_18_BASE_DLAMI_US_EAST_1,
     UBUNTU_18_BASE_DLAMI_US_WEST_2,
+    UBUNTU_20_BASE_DLAMI_US_WEST_2,
     UBUNTU_18_HPU_DLAMI_US_WEST_2,
     UBUNTU_18_HPU_DLAMI_US_EAST_1,
     PT_GPU_PY3_BENCHMARK_IMAGENET_AMI_US_EAST_1,
@@ -192,6 +199,7 @@ PUBLIC_DLC_REGISTRY = "763104351884"
 SAGEMAKER_EXECUTION_REGIONS = ["us-west-2", "us-east-1", "eu-west-1"]
 # Before SM GA with Trn1, they support launch of ml.trn1 instance only in us-east-1. After SM GA this can be removed
 SAGEMAKER_NEURON_EXECUTION_REGIONS = ["us-west-2"]
+SAGEMAKER_NEURONX_EXECUTION_REGIONS = ["us-east-1"]
 
 UPGRADE_ECR_REPO_NAME = "upgraded-image-ecr-scan-repo"
 ECR_SCAN_HELPER_BUCKET = f"""ecr-scan-helper-{boto3.client("sts", region_name=DEFAULT_REGION).get_caller_identity().get("Account")}"""
@@ -526,6 +534,10 @@ def is_graviton_architecture():
 
 def is_dlc_cicd_context():
     return os.getenv("BUILD_CONTEXT") in ["PR", "CANARY", "NIGHTLY", "MAINLINE"]
+
+
+def is_efa_dedicated():
+    return os.getenv("EFA_DEDICATED", "False").lower() == "true"
 
 
 def is_generic_image():
@@ -1374,7 +1386,7 @@ def get_region_from_image_uri(image_uri):
     :param image_uri: <str> ECR image URI
     :return: <str> AWS Region Name
     """
-    region_pattern = r"(us(-gov)?|ap|ca|cn|eu|sa)-(central|(north|south)?(east|west)?)-\d+"
+    region_pattern = r"(us(-gov)?|af|ap|ca|cn|eu|il|me|sa)-(central|(north|south)?(east|west)?)-\d+"
     region_search = re.search(region_pattern, image_uri)
     assert region_search, f"{image_uri} must have region that matches {region_pattern}"
     return region_search.group()
@@ -1402,6 +1414,7 @@ def get_framework_and_version_from_tag(image_uri):
         "huggingface_pytorch_trcomp",
         "huggingface_tensorflow",
         "huggingface_pytorch",
+        "stabilityai_pytorch",
         "pytorch_trcomp" "tensorflow",
         "mxnet",
         "pytorch",
@@ -1733,6 +1746,8 @@ def get_framework_from_image_uri(image_uri):
         if "pytorch-trcomp" in image_uri
         else "huggingface_pytorch"
         if "huggingface-pytorch" in image_uri
+        else "stabilityai_pytorch"
+        if "stabilityai-pytorch" in image_uri
         else "mxnet"
         if "mxnet" in image_uri
         else "pytorch"
@@ -1974,7 +1989,16 @@ def start_container(container_name, image_uri, context):
     )
 
 
-def run_cmd_on_container(container_name, context, cmd, executable="bash", warn=False):
+def run_cmd_on_container(
+    container_name,
+    context,
+    cmd,
+    executable="bash",
+    warn=False,
+    hide=True,
+    timeout=60,
+    asynchronous=False,
+):
     """
     Helper function to run commands on a locally running container
     :param container_name: Name of the docker container
@@ -1982,6 +2006,11 @@ def run_cmd_on_container(container_name, context, cmd, executable="bash", warn=F
     :param cmd: Command to run on the container
     :param executable: Executable to run on the container (bash or python)
     :param warn: Whether to only warn as opposed to exit if command fails
+    :param hide: Hide some or all of the stdout/stderr from running the command
+    :param timeout: Timeout in seconds for command to be executed
+    :param asynchronous: False by default, set to True if command should run asynchronously
+        Refer to https://docs.pyinvoke.org/en/latest/api/runners.html#invoke.runners.Runner.run for
+        more details on running asynchronous commands.
     :return: invoke output, can be used to parse stdout, etc
     """
     if executable not in ("bash", "python"):
@@ -1990,9 +2019,10 @@ def run_cmd_on_container(container_name, context, cmd, executable="bash", warn=F
         )
     return context.run(
         f"docker exec --user root {container_name} {executable} -c '{cmd}'",
-        hide=True,
+        hide=hide,
         warn=warn,
-        timeout=60,
+        timeout=timeout,
+        asynchronous=asynchronous,
     )
 
 
